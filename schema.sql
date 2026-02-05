@@ -1,5 +1,12 @@
 -- Database Schema for Restaurant System
 
+-- --------------------------------------------------
+-- DATABASE CREATION
+-- --------------------------------------------------
+DROP DATABASE IF EXISTS little_lemon;
+CREATE DATABASE little_lemon;
+USE little_lemon;
+
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
     user_id INT AUTO_INCREMENT PRIMARY KEY,
@@ -25,6 +32,7 @@ CREATE TABLE IF NOT EXISTS menu (
     name VARCHAR(100) NOT NULL,
     description TEXT,
     price DECIMAL(10, 2) NOT NULL,
+    image VARCHAR(255),
     category VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
