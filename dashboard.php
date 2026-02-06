@@ -88,7 +88,10 @@ $res_list = $reservations->fetchAll(PDO::FETCH_ASSOC);
       <h3>Quick Actions</h3>
       <div class="d-flex flex-wrap gap-2">
         <a href="reservation.php" class="btn btn-success"><i class="bi bi-calendar-plus"></i> Make Reservation</a>
+        
         <a href="index.php" class="btn btn-primary"><i class="bi bi-menu-app"></i> View Menu</a>
+
+        <a href="profile.php" class="btn btn-outline-dark"><i class="bi bi-person-circle"></i> Profile</a>
       </div>
     </div>
   </div>

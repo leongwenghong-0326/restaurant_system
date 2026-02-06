@@ -20,8 +20,14 @@
     </button>
     <div class="collapse navbar-collapse" id="navbarNav">
       <ul class="navbar-nav ms-auto">
+
+
+
         <?php if(isset($_SESSION['user_id'])): ?>
           <li class="nav-item"><a class="nav-link" href="dashboard.php">Dashboard</a></li>
+          
+          <li class="nav-item"><a class="nav-link" href="profile.php">Profile</a></li>
+
           <li class="nav-item"><a class="nav-link" href="logout.php">Logout</a></li>
         <?php else: ?>
           <li class="nav-item"><a class="nav-link" href="register.php">Register</a></li>
@@ -40,10 +46,15 @@
     <?php if(!isset($_SESSION['user_id'])): ?>
       <a href="register.php" class="btn btn-success btn-lg mx-2">Join Us</a>
       <a href="login.php" class="btn btn-primary btn-lg mx-2">Login</a>
+      <a href="reservation.php" class="btn btn-info btn-lg mx-2">Book Table (Guest)</a>
     <?php else: ?>
       <a href="reservation.php" class="btn btn-success btn-lg mx-2">Book a Table</a>
+
       <a href="dashboard.php" class="btn btn-primary btn-lg mx-2">My Account</a>
     <?php endif; ?>
+
+
+
   </div>
 </div>
 

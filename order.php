@@ -2,57 +2,115 @@
 session_start();
 include 'db.php';
 
-// Only logged in users
-if(!isset($_SESSION['user_id'])){    
-    header("Location: login.php");
-    exit;
-}
+$is_guest = !isset($_SESSION['user_id']);
+$user_id = $is_guest ? null : $_SESSION['user_id'];
+$guest_session = $is_guest ? session_id() : null;
 
-$reservation_id = $_GET['reservation_id'] ?? 0;
 $error = "";
 $success = "";
 
-// Check reservation belongs to user
-$stmt = $conn->prepare("SELECT * FROM reservations WHERE reservation_id=? AND user_id=?");
-$stmt->execute([$reservation_id, $_SESSION['user_id']]);
-$reservation = $stmt->fetch(PDO::FETCH_ASSOC);
-if(!$reservation){    
-    die("Reservation not found or you don't have permission!");
+// Get reservation ID
+$reservation_id = $_GET['reservation_id'] ?? null;
+if (!$reservation_id) {
+    die("Reservation not specified.");
 }
 
-// Handle food order
-if(isset($_POST['order_food'])){    
+// Handle adding new food items
+if (isset($_POST['add_order'])) {
     $menu_id = $_POST['menu_id'];
     $quantity = (int)$_POST['quantity'];
+    $special_instructions = trim($_POST['special_instructions']);
 
-    $menu_item = $conn->prepare("SELECT * FROM menu WHERE menu_id=?");
-    $menu_item->execute([$menu_id]);
-    $item = $menu_item->fetch(PDO::FETCH_ASSOC);
-
-    if($item){
-        $total_price = $item['price'] * $quantity;
-        $stmt = $conn->prepare("INSERT INTO orders (reservation_id, menu_id, quantity, total_price) VALUES (?,?,?,?)");
-        if($stmt->execute([$reservation_id, $menu_id, $quantity, $total_price])){
-            $success = "Food ordered successfully!";
-        }
+    if (!$menu_id || $quantity < 1) {
+        $error = "Please select a menu item and quantity.";
     } else {
-        $error = "Menu item not found!";
+        // Get menu price
+        $menu_stmt = $conn->prepare("SELECT price FROM menu WHERE menu_id=?");
+        $menu_stmt->execute([$menu_id]);
+        $menu = $menu_stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$menu) {
+            $error = "Menu item not found.";
+        } else {
+            $total_price = $menu['price'] * $quantity;
+
+            $stmt = $conn->prepare("
+                INSERT INTO orders (reservation_id, menu_id, quantity, total_price, special_instructions)
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            if ($stmt->execute([$reservation_id, $menu_id, $quantity, $total_price, $special_instructions])) {
+                $success = "Order added successfully!";
+            } else {
+                $error = "Failed to add order.";
+            }
+        }
     }
 }
 
-// Fetch all menu items
-$menu_items = $conn->query("SELECT * FROM menu")->fetchAll(PDO::FETCH_ASSOC);
+// Handle editing an order
+if (isset($_POST['edit_order'])) {
+    $order_id = $_POST['order_id'];
+    $quantity = (int)$_POST['quantity'];
+    $special_instructions = trim($_POST['special_instructions']);
 
-// Fetch orders for this reservation
-$orders = $conn->prepare("SELECT o.*, m.name, m.image FROM orders o JOIN menu m ON o.menu_id=m.menu_id WHERE o.reservation_id=?");
-$orders->execute([$reservation_id]);
-$order_list = $orders->fetchAll(PDO::FETCH_ASSOC);
-
-// Calculate total amount
-$total_amount = 0;
-foreach($order_list as $order) {
-    $total_amount += $order['total_price'];
+    if ($quantity < 1) {
+        $error = "Quantity must be at least 1.";
+    } else {
+        // Get menu price for calculation
+        $menu_stmt = $conn->prepare("
+            SELECT m.price 
+            FROM orders o 
+            JOIN menu m ON o.menu_id = m.menu_id 
+            WHERE o.order_id=?
+        ");
+        $menu_stmt->execute([$order_id]);
+        $menu = $menu_stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$menu) {
+            $error = "Order not found.";
+        } else {
+            $total_price = $menu['price'] * $quantity;
+            $stmt = $conn->prepare("
+                UPDATE orders 
+                SET quantity=?, total_price=?, special_instructions=? 
+                WHERE order_id=?
+            ");
+            if ($stmt->execute([$quantity, $total_price, $special_instructions, $order_id])) {
+                $success = "Order updated successfully!";
+            } else {
+                $error = "Failed to update order.";
+            }
+        }
+    }
 }
+
+// Handle canceling an order
+if (isset($_POST['cancel_order'])) {
+    $order_id = $_POST['order_id'];
+    $stmt = $conn->prepare("UPDATE orders SET status='cancelled' WHERE order_id=?");
+    if ($stmt->execute([$order_id])) {
+        $success = "Order cancelled successfully!";
+    } else {
+        $error = "Failed to cancel order.";
+    }
+}
+
+// Fetch all orders for this reservation
+try {
+    $orders_stmt = $conn->prepare("
+        SELECT o.*, m.name AS menu_name, m.price AS unit_price 
+        FROM orders o 
+        JOIN menu m ON o.menu_id = m.menu_id 
+        WHERE o.reservation_id=?
+        ORDER BY o.created_at DESC
+    ");
+    $orders_stmt->execute([$reservation_id]);
+    $orders = $orders_stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Exception $e) {
+    $orders = [];
+    $error = "Failed to load orders.";
+}
+
+// Fetch all menu items
+$menu_items = $conn->query("SELECT * FROM menu ORDER BY name")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -62,155 +120,122 @@ foreach($order_list as $order) {
 <title>Order Food - Little Lemon</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
-<link href="assets/css/style.css" rel="stylesheet">
 </head>
 <body>
 
-<!-- Navbar -->
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-  <div class="container">
-    <a class="navbar-brand" href="index.php">Little Lemon</a>
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="navbarNav">
-      <ul class="navbar-nav ms-auto">
-        <li class="nav-item"><a class="nav-link" href="index.php">Home</a></li>
-        <li class="nav-item"><a class="nav-link" href="dashboard.php">Dashboard</a></li>
-        <li class="nav-item"><a class="nav-link" href="reservation.php">Reservations</a></li>
-        <li class="nav-item"><a class="nav-link" href="logout.php">Logout</a></li>
-      </ul>
-    </div>
-  </div>
-</nav>
+<div class="container mt-5">
+    <h3><i class="bi bi-cart"></i> Orders for Reservation #<?= htmlspecialchars($reservation_id) ?></h3>
 
-<div class="container mt-4">
-  <div class="row mb-4">
-    <div class="col-12">
-      <div class="card bg-light">
-        <div class="card-body">
-          <h3 class="card-title">Order Food for Your Reservation</h3>
-          <p class="card-text">
-            <i class="bi bi-calendar-event"></i> Date: <strong><?= date('M j, Y', strtotime($reservation['date'])) ?></strong> | 
-            <i class="bi bi-clock"></i> Time: <strong><?= date('g:i A', strtotime($reservation['time'])) ?></strong> | 
-            <i class="bi bi-table"></i> Table: <strong><?= htmlspecialchars($reservation['table_id']) ?></strong>
-          </p>
-        </div>
-      </div>
-    </div>
-  </div>
-  
-  <div class="row">
-    <div class="col-lg-8">
-      <div class="card">
-        <div class="card-header bg-success text-white">
-          <h3 class="mb-0"><i class="bi bi-cart-plus"></i> Order Food</h3>
-        </div>
-        <div class="card-body">
-          <?php if($error) echo "<div class='alert alert-danger'>$error</div>"; ?>
-          <?php if($success) echo "<div class='alert alert-success'>$success</div>"; ?>
+    <?php if($error) echo "<div class='alert alert-danger'>$error</div>"; ?>
+    <?php if($success) echo "<div class='alert alert-success'>$success</div>"; ?>
 
-          <form method="POST" class="row g-3">
-            <div class="col-md-8">
-              <label class="form-label">Select Menu Item</label>
-              <select name="menu_id" class="form-select" required>
-                <option value="">Choose a menu item...</option>
-                <?php foreach($menu_items as $item): ?>
-                  <option value="<?= $item['menu_id'] ?>">
-                    <?= htmlspecialchars($item['name']) ?> - RM <?= number_format($item['price'], 2) ?>
-                  </option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-            <div class="col-md-4">
-              <label class="form-label">Quantity</label>
-              <input type="number" name="quantity" class="form-control" min="1" value="1" required>
-            </div>
-            <div class="col-12">
-              <button type="submit" name="order_food" class="btn btn-success w-100">
-                <i class="bi bi-cart"></i> Add to Order
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
-    
-    <div class="col-lg-4">
-      <div class="card">
-        <div class="card-header bg-primary text-white">
-          <h3 class="mb-0"><i class="bi bi-receipt"></i> Order Summary</h3>
-        </div>
+    <!-- Add new order -->
+    <div class="card mb-4">
+        <div class="card-header bg-success text-white">Add Food Item</div>
         <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-3">
-            <span class="fw-bold">Total Amount:</span>
-            <span class="h4 text-success">RM <?= number_format($total_amount, 2) ?></span>
-          </div>
-          <div class="d-grid gap-2">
-            <a href="reservation.php" class="btn btn-outline-secondary">
-              <i class="bi bi-arrow-left"></i> Back to Reservations
-            </a>
-          </div>
+            <form method="POST" class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Menu Item</label>
+                    <select name="menu_id" class="form-select" required>
+                        <option value="">Select Menu</option>
+                        <?php foreach($menu_items as $menu): ?>
+                            <option value="<?= $menu['menu_id'] ?>"><?= htmlspecialchars($menu['name']) ?> (RM<?= $menu['price'] ?>)</option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Quantity</label>
+                    <input type="number" name="quantity" class="form-control" min="1" value="1">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Special Instructions</label>
+                    <input type="text" name="special_instructions" class="form-control" placeholder="Optional">
+                </div>
+                <div class="col-12">
+                    <button type="submit" name="add_order" class="btn btn-success"><i class="bi bi-plus-circle"></i> Add to Order</button>
+                </div>
+            </form>
         </div>
-      </div>
     </div>
-  </div>
-  
-  <div class="row mt-4">
-    <div class="col-12">
-      <div class="card">
-        <div class="card-header bg-secondary text-white">
-          <h3 class="mb-0"><i class="bi bi-list-check"></i> Current Orders</h3>
-        </div>
+
+    <!-- Orders Table -->
+    <div class="card">
+        <div class="card-header bg-primary text-white">Your Orders</div>
         <div class="card-body">
-          <?php if(empty($order_list)): ?>
-            <div class="text-center py-4">
-              <i class="bi bi-cart-x" style="font-size: 3rem; color: #ccc;"></i>
-              <p class="mt-3">No orders placed yet for this reservation.</p>
-            </div>
-          <?php else: ?>
-            <div class="table-responsive">
-              <table class="table table-hover">
-                <thead class="table-light">
-                  <tr>
-                    <th>Menu Item</th>
-                    <th>Quantity</th>
-                    <th>Unit Price</th>
-                    <th>Total Price</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <?php foreach($order_list as $o): ?>
-                    <tr>
-                      <td>
-                        <div class="d-flex align-items-center">
-                          <?php if(!empty($o['image'])): ?>
-                            <img src="assets/img/<?= $o['image'] ?>" alt="<?= htmlspecialchars($o['name']) ?>" class="me-2" style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;">
-                          <?php endif; ?>
-                          <span><?= htmlspecialchars($o['name']) ?></span>
-                        </div>
-                      </td>
-                      <td><?= $o['quantity'] ?></td>
-                      <td>RM <?= number_format($o['price'] ?? $o['total_price']/$o['quantity'], 2) ?></td>
-                      <td>RM <?= number_format($o['total_price'], 2) ?></td>
-                    </tr>
-                  <?php endforeach; ?>
-                </tbody>
-              </table>
-            </div>
-          <?php endif; ?>
+            <?php if(empty($orders)): ?>
+                <p>No orders yet. Add some food items above.</p>
+            <?php else: ?>
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Food Item</th>
+                                <th>Unit Price</th>
+                                <th>Quantity</th>
+                                <th>Total Price</th>
+                                <th>Instructions</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach($orders as $o): ?>
+                                <tr>
+                                    <td><?= htmlspecialchars($o['menu_name']) ?></td>
+                                    <td>RM<?= number_format($o['unit_price'],2) ?></td>
+                                    <td><?= $o['quantity'] ?></td>
+                                    <td>RM<?= number_format($o['total_price'],2) ?></td>
+                                    <td><?= htmlspecialchars($o['special_instructions']) ?></td>
+                                    <td>
+                                        <span class="badge bg-<?= $o['status']=='cancelled'?'danger':'success' ?>"><?= ucfirst($o['status']) ?></span>
+                                    </td>
+                                    <td>
+                                        <!-- Edit Button -->
+                                        <button class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#editModal<?= $o['order_id'] ?>"><i class="bi bi-pencil"></i></button>
+                                        <!-- Cancel Form -->
+                                        <form method="POST" class="d-inline">
+                                            <input type="hidden" name="order_id" value="<?= $o['order_id'] ?>">
+                                            <button type="submit" name="cancel_order" class="btn btn-sm btn-danger"><i class="bi bi-x-circle"></i></button>
+                                        </form>
+                                    </td>
+                                </tr>
+
+                                <!-- Edit Modal -->
+                                <div class="modal fade" id="editModal<?= $o['order_id'] ?>" tabindex="-1" aria-labelledby="editModalLabel<?= $o['order_id'] ?>" aria-hidden="true">
+                                  <div class="modal-dialog">
+                                    <div class="modal-content">
+                                      <div class="modal-header">
+                                        <h5 class="modal-title">Edit Order: <?= htmlspecialchars($o['menu_name']) ?></h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                      </div>
+                                      <form method="POST">
+                                        <div class="modal-body">
+                                            <input type="hidden" name="order_id" value="<?= $o['order_id'] ?>">
+                                            <div class="mb-3">
+                                                <label>Quantity</label>
+                                                <input type="number" name="quantity" class="form-control" min="1" value="<?= $o['quantity'] ?>">
+                                            </div>
+                                            <div class="mb-3">
+                                                <label>Special Instructions</label>
+                                                <input type="text" name="special_instructions" class="form-control" value="<?= htmlspecialchars($o['special_instructions']) ?>">
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="submit" name="edit_order" class="btn btn-warning">Save Changes</button>
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                        </div>
+                                      </form>
+                                    </div>
+                                  </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
         </div>
-      </div>
     </div>
-  </div>
 </div>
-
-<!-- Footer -->
-<footer class="bg-dark text-white text-center py-4 mt-5">
-  <div class="container">
-    <p>&copy; 2026 Little Lemon Restaurant. All rights reserved.</p>
-  </div>
-</footer>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
